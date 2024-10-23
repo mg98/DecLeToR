@@ -1,65 +1,39 @@
 import sys
 import os
 
-# Add the path to the allrank submodule
-sys.path.append('../allRank')
+sys.path.append('./allRank')
 
-from allrank.models.losses import listMLE
-from allrank.models.model import make_model
-from allrank.data.dataset import ListwiseDataset
-from allrank.config import Config
-from allrank.training.train_utils import fit
-from allrank.models.metrics import ndcg
+from allrank.data.dataset_loading import load_libsvm_dataset, create_data_loaders
+from allrank.models.model_utils import get_torch_device
 
 import torch
 from torch.utils.data import DataLoader
-import numpy as np
 from common import UserActivity
 
 def ltr_rank(user_activities: list[UserActivity]):
     """
     Implementing Learning to Rank using the allRank library.
     """
-    # Prepare data
-    X = []
-    y = []
-    for ua in user_activities:
-        features = [[t.seeders, t.leechers] for t in ua.results]
-        X.append(features)
-        relevance = [1 if i == ua.chosen_index else 0 for i in range(len(ua.results))]
-        y.append(relevance)
 
-    X = np.array(X)
-    y = np.array(y)
-
-    # Create dataset and dataloader
-    dataset = ListwiseDataset(torch.FloatTensor(X), torch.FloatTensor(y))
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
-
-    # Configure model
-    config = Config(
-        model=dict(
-            fc_model=dict(sizes=[64, 32, 1], input_size=2, activation="ReLU", dropout=0.1),
-            transformer=None
-        ),
-        loss=dict(name="listMLE"),
-        optimizer=dict(name="Adam", lr=0.001),
-        lr_scheduler=dict(name="StepLR", step_size=100, gamma=0.1),
-        epochs=10
+    train_ds, val_ds = load_libsvm_dataset(
+        input_path='./',
+        slate_length=240,
+        validation_ds_role='vali'
     )
 
-    # Create and train model
-    model = make_model(config)
-    fit(model, dataloader, config, val_dataloader=None)
+    n_features = train_ds.shape[-1]
+    assert n_features == val_ds.shape[-1], "Last dimensions of train_ds and val_ds do not match!"
 
-    # Re-rank results
-    model.eval()
-    with torch.no_grad():
-        for ua in user_activities:
-            features = torch.FloatTensor([[t.seeders, t.leechers] for t in ua.results])
-            scores = model(features.unsqueeze(0)).squeeze()
-            sorted_indices = torch.argsort(scores, descending=True)
-            ua.results = [ua.results[i] for i in sorted_indices]
+    # train_dl, val_dl
+    train_dl, val_dl = create_data_loaders(
+        train_ds, val_ds, num_workers=1, batch_size=64)
 
-    return user_activities
+    # gpu support
+    dev = get_torch_device()
+    print("Model training will execute on {}".format(dev.type))
+
+
+
+
+    return None
 
